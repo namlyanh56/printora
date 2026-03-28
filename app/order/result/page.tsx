@@ -50,7 +50,7 @@ export default function ResultPage() {
 
   useEffect(() => {
     if (!id) {
-      router.replace("/order");
+      setError("Order ID tidak ditemukan.");
       return;
     }
 
@@ -59,21 +59,28 @@ export default function ResultPage() {
         const res = await fetch(`/api/orders/${encodeURIComponent(id)}`);
         const json = await res.json();
 
+        if (res.status === 404) {
+          setError("Order tidak ditemukan.");
+          return;
+        }
+
         if (!res.ok || !json?.ok) {
-          setError(json?.error || "Order tidak ditemukan.");
+          setError(json?.error || "Gagal memuat data order.");
           return;
         }
 
         setOrder(json.order);
       } catch {
-        setError("Gagal memuat data order.");
+        setError("Terjadi gangguan jaringan. Silakan coba lagi.");
       }
     })();
-  }, [id, router]);
+  }, [id]);
 
   async function handlePaid() {
     if (!id) return;
     setPaying(true);
+    setError(null);
+
     try {
       const res = await fetch(`/api/orders/${encodeURIComponent(id)}/pay`, { method: "POST" });
       const json = await res.json();
@@ -91,9 +98,14 @@ export default function ResultPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-sm text-red-500">{error}</p>
-        <Link href="/order" className="text-sm font-medium text-brand-600 underline">
-          Kembali ke Form Order
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link href="/order" className="text-sm font-medium text-brand-600 underline">
+            Kembali ke Form Order
+          </Link>
+          <Link href="/" className="text-sm font-medium text-gray-600 underline">
+            Ke Beranda
+          </Link>
+        </div>
       </div>
     );
   }
@@ -119,18 +131,26 @@ export default function ResultPage() {
 
       <main className="mx-auto max-w-2xl px-6 pb-20 pt-10">
         <div className="mb-8 flex items-center gap-2 text-xs font-medium text-gray-400">
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-300 text-white">✓</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-300 text-white">
+            ✓
+          </span>
           <span>Isi Data</span>
           <span className="mx-1">—</span>
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-900 text-white">2</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-900 text-white">
+            2
+          </span>
           <span className="text-gray-900">Harga</span>
           <span className="mx-1">—</span>
-          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-gray-200">3</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-gray-200">
+            3
+          </span>
           <span>Selesai</span>
         </div>
 
         <h1 className="mb-1 text-2xl font-bold text-gray-900">Ringkasan Order</h1>
-        <p className="mb-8 text-sm text-gray-500">Periksa data dan harga sebelum melakukan pembayaran.</p>
+        <p className="mb-8 text-sm text-gray-500">
+          Periksa data dan harga sebelum melakukan pembayaran.
+        </p>
 
         <div className="mb-5 rounded-xl bg-brand-50 px-5 py-4">
           <p className="text-xs font-medium text-brand-700">Order ID</p>
@@ -151,7 +171,9 @@ export default function ResultPage() {
 
         {order.file && (
           <div className="mb-5 rounded-xl border border-gray-100 bg-gray-50 p-5">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">File Dokumen</p>
+            <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+              File Dokumen
+            </p>
             <div className="space-y-2 text-sm">
               <Row label="Nama file" value={order.file.originalFilename} />
               <Row label="Ukuran" value={formatBytes(order.file.sizeBytes)} />
@@ -159,7 +181,9 @@ export default function ResultPage() {
                 label="Format"
                 value={
                   order.file.isPdf ? (
-                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">PDF ✓</span>
+                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                      PDF ✓
+                    </span>
                   ) : (
                     <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">
                       Non-PDF — perlu cek admin
@@ -172,7 +196,9 @@ export default function ResultPage() {
         )}
 
         <div className="mb-5 rounded-xl border border-gray-100 bg-gray-50 p-5">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Estimasi Harga</p>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+            Estimasi Harga
+          </p>
           <div className="space-y-2 text-sm">
             <Row
               label={`${order.pageCount} halaman × ${formatRp(order.pricePerPage)}`}
@@ -183,13 +209,17 @@ export default function ResultPage() {
             <div className="my-2 border-t border-gray-200" />
             <Row
               label={<span className="font-semibold text-gray-900">Total Transfer</span>}
-              value={<span className="font-bold text-gray-900 md:text-base">{formatRp(order.grandTotal)}</span>}
+              value={
+                <span className="font-bold text-gray-900 md:text-base">{formatRp(order.grandTotal)}</span>
+              }
             />
           </div>
         </div>
 
         <div className="mb-8 rounded-xl border border-gray-200 p-5 text-center">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Pembayaran via QRIS</p>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+            Pembayaran via QRIS
+          </p>
           <div className="mx-auto flex h-48 w-48 items-center justify-center rounded-xl bg-gray-100 text-gray-300">
             <span className="text-xs font-medium">[ QRIS statis akan tampil di sini ]</span>
           </div>
@@ -217,7 +247,13 @@ export default function ResultPage() {
   );
 }
 
-function Row({ label, value }: { label: React.ReactNode; value: React.ReactNode }) {
+function Row({
+  label,
+  value,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4">
       <span className="shrink-0 text-gray-500">{label}</span>
