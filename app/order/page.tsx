@@ -26,8 +26,9 @@ const ALLOWED_TYPES = [
 ];
 
 type UploadResponse = {
-  ok: boolean;
-  upload: {
+  ok?: boolean;
+  error?: string;
+  upload?: {
     originalFilename: string;
     mimeType: string;
     sizeBytes: number;
@@ -42,13 +43,14 @@ type UploadResponse = {
       colorHint?: "bw" | "light_color" | "full_color" | "unknown";
     };
   };
-  error?: string;
 };
 
 type CreateOrderResponse = {
-  ok: boolean;
-  order?: { orderId: string };
+  ok?: boolean;
   error?: string;
+  order?: {
+    orderId: string;
+  };
 };
 
 export default function OrderPage() {
@@ -60,6 +62,7 @@ export default function OrderPage() {
   const [dragOver, setDragOver] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string>("");
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const { name, value } = e.target;
@@ -72,6 +75,7 @@ export default function OrderPage() {
   function handleFile(selected: File | null) {
     if (!selected) return;
     setFile(selected);
+    setSubmitError("");
     if (errors.fileName) setErrors((prev) => ({ ...prev, fileName: undefined }));
   }
 
@@ -96,32 +100,34 @@ export default function OrderPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!validate()) return;
-    if (!file) return;
+    if (!validate() || !file) return;
 
     setSubmitting(true);
-    setErrors({});
+    setSubmitError("");
 
     try {
+      // 1) upload
       const uploadForm = new FormData();
       uploadForm.append("file", file);
 
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: uploadForm });
+      const uploadRes = await fetch("/api/upload", {
+        method: "POST",
+        body: uploadForm,
+      });
+
       const uploadJson = (await uploadRes.json()) as UploadResponse;
 
-      if (!uploadRes.ok || !uploadJson.ok) {
-        throw new Error(uploadJson.error || "Gagal upload file.");
+      if (!uploadRes.ok || !uploadJson.ok || !uploadJson.upload) {
+        throw new Error(uploadJson.error || "Gagal upload file. Silakan coba lagi.");
       }
 
-      const pageCount = uploadJson.upload.analysis.pageCount ?? 1;
-
-      // Frontend no longer decides printTier
-      const orderPayload = {
+      // 2) create order
+      const payload = {
         customerName: form.name.trim(),
         customerAddress: form.address.trim(),
         customerWhatsapp: form.whatsapp.trim(),
         note: form.note.trim() || null,
-        pageCount,
+        pageCount: uploadJson.upload.analysis.pageCount ?? 1,
         file: {
           originalFilename: uploadJson.upload.originalFilename,
           mimeType: uploadJson.upload.mimeType,
@@ -136,25 +142,23 @@ export default function OrderPage() {
         },
       };
 
-      const orderRes = await fetch("/api/orders", {
+      const createRes = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderPayload),
+        body: JSON.stringify(payload),
       });
 
-      const orderJson = (await orderRes.json()) as CreateOrderResponse;
+      const createJson = (await createRes.json()) as CreateOrderResponse;
 
-      if (!orderRes.ok || !orderJson.ok || !orderJson.order?.orderId) {
-        throw new Error(orderJson.error || "Gagal membuat order.");
+      if (!createRes.ok || !createJson.ok || !createJson.order?.orderId) {
+        throw new Error(createJson.error || "Gagal membuat order. Silakan ulangi.");
       }
 
-      router.push(`/order/result?id=${encodeURIComponent(orderJson.order.orderId)}`);
+      router.push(`/order/result?id=${encodeURIComponent(createJson.order.orderId)}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses order.";
-      setErrors((prev) => ({
-        ...prev,
-        fileName: msg,
-      }));
+      const message =
+        err instanceof Error ? err.message : "Terjadi kesalahan saat memproses order.";
+      setSubmitError(message);
     } finally {
       setSubmitting(false);
     }
@@ -196,7 +200,9 @@ export default function OrderPage() {
         </div>
 
         <h1 className="mb-1 text-2xl font-bold text-gray-900">Form Order</h1>
-        <p className="mb-8 text-sm text-gray-500">Isi data di bawah dan upload file dokumen Anda.</p>
+        <p className="mb-8 text-sm text-gray-500">
+          Isi data di bawah dan upload file dokumen Anda.
+        </p>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
           <div>
@@ -269,7 +275,9 @@ export default function OrderPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">Upload File</label>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              Upload File
+            </label>
             <div
               role="button"
               tabIndex={0}
@@ -309,7 +317,8 @@ export default function OrderPage() {
                 <>
                   <p className="text-3xl">☁️</p>
                   <p className="mt-3 text-sm font-medium text-gray-700">
-                    Drag & drop atau <span className="text-brand-600 underline">klik untuk pilih file</span>
+                    Drag & drop atau{" "}
+                    <span className="text-brand-600 underline">klik untuk pilih file</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
                     PDF, Word, Excel, PowerPoint, JPG, PNG
@@ -329,8 +338,16 @@ export default function OrderPage() {
                 File non-PDF akan dikonversi. Butuh pengecekan manual oleh admin.
               </p>
             )}
-            {errors.fileName && <p className="mt-1.5 text-xs text-red-500">{errors.fileName}</p>}
+            {errors.fileName && (
+              <p className="mt-1.5 text-xs text-red-500">{errors.fileName}</p>
+            )}
           </div>
+
+          {submitError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
 
           <div className="pt-2">
             <button
