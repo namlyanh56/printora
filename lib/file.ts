@@ -13,6 +13,20 @@ import { z } from "zod";
  */
 
 /* =========================================================
+   SHARED UPLOAD MIME TYPES (single source of truth)
+========================================================= */
+
+export const UPLOAD_ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "image/jpeg",
+  "image/png",
+] as const;
+
+/* =========================================================
    TYPES & STATUS
 ========================================================= */
 
@@ -66,7 +80,6 @@ export type FileProcessingResult = {
   analysisConfidence: number | null;
   analysisNotes: string[];
 
-  // useful for DB snapshot
   originalName: string;
   safeName: string;
   mimeType: string;
@@ -79,7 +92,7 @@ export type FileProcessingResult = {
    1) FILE ACCEPTANCE
 ========================================================= */
 
-const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB MVP
+const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 const MAX_FILENAME_LENGTH = 140;
 
 const fileInputSchema = z.object({
@@ -104,7 +117,6 @@ export function acceptFile(input: {
     throw new Error("Invalid file buffer.");
   }
 
-  // Ensure buffer-size consistency
   if (input.buffer.length !== input.sizeBytes) {
     throw new Error("File size mismatch.");
   }
@@ -136,7 +148,7 @@ function sanitizeFileName(name: string): string {
 }
 
 /* =========================================================
-   PATCH: LOCAL FILE STORAGE HELPER
+   LOCAL FILE STORAGE HELPER
 ========================================================= */
 
 export async function saveUploadedBufferToLocal(input: {
@@ -153,7 +165,6 @@ export async function saveUploadedBufferToLocal(input: {
 
   await fs.writeFile(absolutePath, input.buffer);
 
-  // Return relative path agar konsisten disimpan ke DB dan bisa dipakai admin
   return `/uploads/${uniqueName}`;
 }
 
@@ -164,7 +175,6 @@ export async function saveUploadedBufferToLocal(input: {
 export function classifyFile(file: AcceptedUpload): ClassifiedFile {
   const looksLikePdfByMime = file.mimeType.toLowerCase() === "application/pdf";
   const looksLikePdfBySignature = hasPdfSignature(file.buffer);
-
   const isPdf = looksLikePdfByMime || looksLikePdfBySignature;
 
   return {
@@ -175,7 +185,6 @@ export function classifyFile(file: AcceptedUpload): ClassifiedFile {
 }
 
 function hasPdfSignature(buffer: Buffer): boolean {
-  // PDF starts with "%PDF-"
   if (buffer.length < 5) return false;
   return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
 }
@@ -184,17 +193,9 @@ function hasPdfSignature(buffer: Buffer): boolean {
    3) PDF ANALYSIS (MVP)
 ========================================================= */
 
-/**
- * Minimal analyzer tanpa dependency berat:
- * - Hitung indikasi page via token "/Type /Page"
- * - confidence medium, fallback manual check bila hasil meragukan
- *
- * NOTE:
- * Untuk akurasi lebih baik, nanti upgrade ke pdfjs/pdf-lib parser.
- */
 export function analyzePdfMvp(buffer: Buffer): PdfAnalysisResult {
   try {
-    const text = buffer.toString("latin1"); // pragmatic binary-safe-ish decode
+    const text = buffer.toString("latin1");
     const pageTokenMatches = text.match(/\/Type\s*\/Page\b/g);
     const pageCountRaw = pageTokenMatches?.length ?? 0;
 
@@ -208,8 +209,6 @@ export function analyzePdfMvp(buffer: Buffer): PdfAnalysisResult {
       };
     }
 
-    // Super-light color hint heuristic
-    // If color operators exist (rg/RG/k/K/scn/SCN), assume some color usage.
     const hasColorOps =
       /(?:\srg\s|\sRG\s|\sk\s|\sK\s|\sscn\s|\sSCN\s)/.test(text);
 
@@ -245,7 +244,6 @@ export function processUploadedFile(input: {
   const classified = classifyFile(accepted);
 
   if (classified.fileClass === FILE_CLASS.NON_PDF) {
-    // Non-PDF => must manual check (business rule)
     return {
       fileClass: FILE_CLASS.NON_PDF,
       isPdf: false,
@@ -269,10 +267,9 @@ export function processUploadedFile(input: {
     };
   }
 
-  // PDF path
   const analysis = analyzePdfMvp(classified.buffer);
-
   const manualCheckRequired = !analysis.ok || analysis.confidence < 0.6;
+
   return {
     fileClass: FILE_CLASS.PDF,
     isPdf: true,
