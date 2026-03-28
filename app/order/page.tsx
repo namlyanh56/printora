@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { UPLOAD_ALLOWED_MIME_TYPES } from "@/lib/file";
 
 type FormData = {
   name: string;
@@ -13,17 +14,8 @@ type FormData = {
   fileSize: number;
 };
 
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-powerpoint",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "image/jpeg",
-  "image/png",
-];
+// Single source of truth from lib/file.ts
+const ALLOWED_TYPES = [...UPLOAD_ALLOWED_MIME_TYPES];
 
 type UploadResponse = {
   ok?: boolean;
@@ -106,7 +98,6 @@ export default function OrderPage() {
     setSubmitError("");
 
     try {
-      // 1) upload
       const uploadForm = new FormData();
       uploadForm.append("file", file);
 
@@ -121,7 +112,6 @@ export default function OrderPage() {
         throw new Error(uploadJson.error || "Gagal upload file. Silakan coba lagi.");
       }
 
-      // 2) create order
       const payload = {
         customerName: form.name.trim(),
         customerAddress: form.address.trim(),
@@ -321,7 +311,7 @@ export default function OrderPage() {
                     <span className="text-brand-600 underline">klik untuk pilih file</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
-                    PDF, Word, Excel, PowerPoint, JPG, PNG
+                    PDF, Word, PowerPoint, JPG, PNG
                   </p>
                 </>
               )}
