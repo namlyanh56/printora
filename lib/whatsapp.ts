@@ -1,9 +1,10 @@
 /**
- * Printora WhatsApp Integration (concept + core logic in one compact file)
+ * Printora WhatsApp Integration (compact single-domain file)
  * - message formatter
  * - reply parser
  * - connection state model
  * - monitoring snapshot helpers
+ * - pragmatic sender abstraction (fallback logging)
  */
 
 export const WA_COMMAND = {
@@ -20,8 +21,6 @@ export type ParsedAdminCommand =
 export function parseAdminReply(rawInput: string): ParsedAdminCommand {
   const raw = (rawInput ?? "").trim().toUpperCase();
 
-  // Support spaces around '#', still strict command
-  // Valid examples: Y#PNR28829, N#PNR12345
   const match = raw.match(/^([YN])\s*#\s*([A-Z0-9-]{4,24})$/);
   if (!match) {
     return {
@@ -51,10 +50,11 @@ export type WaOrderMessageInput = {
   customerName: string;
   customerWhatsapp: string;
   customerAddress: string;
-  fileLabel: string; // e.g. "proposal.pdf (PDF)" or "dokumen.docx (Non-PDF)"
-  pageCount: number | null;
-  totalTransferText: string; // e.g. "Rp24.612"
-  statusLabel: string; // e.g. "menunggu_verifikasi"
+  note: string | null;
+  pageCount: number;
+  printTier: string;
+  totalTransferText: string;
+  manualCheckRequired: boolean;
 };
 
 export function formatOrderNotificationMessage(input: WaOrderMessageInput): string {
@@ -62,15 +62,16 @@ export function formatOrderNotificationMessage(input: WaOrderMessageInput): stri
   const rejectCmd = `N#${input.orderId}`;
 
   return [
-    "📌 *ORDER BARU — Printora*",
+    "📌 *ORDER MENUNGGU VERIFIKASI — Printora*",
     `Order ID: *${input.orderId}*`,
     `Nama: ${input.customerName}`,
-    `WhatsApp: ${input.customerWhatsapp}`,
+    `WA Customer: ${input.customerWhatsapp}`,
     `Alamat: ${input.customerAddress}`,
-    `File: ${input.fileLabel}`,
-    `Halaman: ${input.pageCount ?? "-"}`,
+    `Catatan: ${input.note?.trim() ? input.note : "-"}`,
+    `Halaman: ${input.pageCount}`,
+    `Tier Print: ${input.printTier}`,
     `Total Transfer: ${input.totalTransferText}`,
-    `Status: ${input.statusLabel}`,
+    `Manual Check: ${input.manualCheckRequired ? "YA" : "TIDAK"}`,
     "",
     "Balas command:",
     `Terima: \`${acceptCmd}\``,
@@ -83,10 +84,8 @@ export function formatOrderNotificationMessage(input: WaOrderMessageInput): stri
 ========================= */
 
 export const WA_CONNECTION_STATUS = {
-  ACTIVE: "active",
+  CONNECTED: "connected",
   DISCONNECTED: "disconnected",
-  ERROR: "error",
-  RECONNECT_REQUIRED: "reconnect_required",
 } as const;
 
 export type WaConnectionStatus =
@@ -95,15 +94,13 @@ export type WaConnectionStatus =
 export type WaConnectionState = {
   channelName: "wa_sender_1";
   status: WaConnectionStatus;
-  lastSeenAt: string | null; // ISO
   lastError: string | null;
-  reconnectAttempts: number;
-  updatedAt: string; // ISO
+  lastActivityAt: string | null;
 };
 
 export type WaDeliveryLog = {
   orderId: string;
-  targetWa: string; // WA2
+  targetWa: string;
   status: "queued" | "sent" | "failed";
   messageId?: string | null;
   error?: string | null;
@@ -111,43 +108,76 @@ export type WaDeliveryLog = {
 };
 
 /* =========================
-   Monitoring Snapshot for Admin
+   In-memory monitor state (MVP pragmatic)
 ========================= */
 
-export type WaMonitoringSnapshot = {
-  senderStatus: WaConnectionState;
-  pendingFailedDeliveries: number;
-  lastFailedAt: string | null;
-  recommendation:
-    | "normal"
-    | "check_connection"
-    | "reconnect_now"
-    | "use_dashboard_fallback";
+let connectionState: WaConnectionState = {
+  channelName: "wa_sender_1",
+  status: WA_CONNECTION_STATUS.DISCONNECTED,
+  lastError: null,
+  lastActivityAt: null,
 };
 
-export function buildWaMonitoringSnapshot(params: {
-  senderStatus: WaConnectionState;
-  pendingFailedDeliveries: number;
-  lastFailedAt: string | null;
-}): WaMonitoringSnapshot {
-  const { senderStatus, pendingFailedDeliveries, lastFailedAt } = params;
-
-  let recommendation: WaMonitoringSnapshot["recommendation"] = "normal";
-
-  if (senderStatus.status === WA_CONNECTION_STATUS.ERROR) {
-    recommendation = "use_dashboard_fallback";
-  } else if (senderStatus.status === WA_CONNECTION_STATUS.RECONNECT_REQUIRED) {
-    recommendation = "reconnect_now";
-  } else if (senderStatus.status === WA_CONNECTION_STATUS.DISCONNECTED) {
-    recommendation = "check_connection";
-  } else if (pendingFailedDeliveries > 0) {
-    recommendation = "check_connection";
-  }
-
-  return {
-    senderStatus,
-    pendingFailedDeliveries,
-    lastFailedAt,
-    recommendation,
-  };
+export function getWaConnectionState(): WaConnectionState {
+  return { ...connectionState };
 }
+
+export function setWaConnectionState(next: Partial<WaConnectionState>): WaConnectionState {
+  connectionState = {
+    ...connectionState,
+    ...next,
+    lastActivityAt: next.lastActivityAt ?? new Date().toISOString(),
+  };
+  return { ...connectionState };
+}
+
+/* =========================
+   Sender abstraction
+========================= */
+
+export type SendWaPayload = {
+  to: string;
+  message: string;
+  orderId: string;
+};
+
+export type SendWaResult = {
+  ok: boolean;
+  messageId?: string;
+  error?: string;
+};
+
+export interface WaSender {
+  send(payload: SendWaPayload): Promise<SendWaResult>;
+}
+
+/**
+ * Default sender for MVP:
+ * - no real connector yet
+ * - logs payload
+ * - returns failed or success based on env flag
+ */
+export const fallbackWaSender: WaSender = {
+  async send(payload) {
+    const simulateConnected = process.env.WA_SIMULATE_CONNECTED === "1";
+
+    if (!simulateConnected) {
+      setWaConnectionState({
+        status: WA_CONNECTION_STATUS.DISCONNECTED,
+        lastError: "WA connector not configured",
+        lastActivityAt: new Date().toISOString(),
+      });
+      console.error("[WA:FALLBACK:SEND_FAILED]", payload);
+      return { ok: false, error: "WA connector not configured" };
+    }
+
+    const fakeMessageId = `wa-${Date.now()}`;
+    setWaConnectionState({
+      status: WA_CONNECTION_STATUS.CONNECTED,
+      lastError: null,
+      lastActivityAt: new Date().toISOString(),
+    });
+    console.info("[WA:FALLBACK:SEND_OK]", { ...payload, messageId: fakeMessageId });
+    return { ok: true, messageId: fakeMessageId };
+  },
+};
