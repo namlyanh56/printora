@@ -90,6 +90,15 @@ export function generateOrderId(prefix = "PNR"): string {
   return `${prefix}${n.toString().padStart(5, "0")}`;
 }
 
+async function generateUniqueOrderId(maxRetry = 8): Promise<string> {
+  for (let i = 0; i < maxRetry; i++) {
+    const candidate = generateOrderId();
+    const exists = await db.query("SELECT 1 FROM orders WHERE order_id = $1 LIMIT 1", [candidate]);
+    if (!exists.rowCount) return candidate;
+  }
+  throw new Error("Failed to generate unique order id.");
+}
+
 function toDbStatus(status: OrderStatus): string {
   switch (status) {
     case ORDER_STATUS.DRAFT:
@@ -154,7 +163,7 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRecord>
     });
 
     const status = input.initialStatus ?? ORDER_STATUS.MENUNGGU_PEMBAYARAN;
-    const orderId = generateOrderId();
+    const orderId = await generateUniqueOrderId();
 
     const insert = await client.query(
       `
@@ -319,10 +328,42 @@ export async function markOrderAsPaid(orderPublicId: string): Promise<OrderRecor
   }
 }
 
-export async function getOrderByPublicId(orderPublicId: string): Promise<OrderRecord | null> {
+export async function getOrderByPublicId(orderPublicId: string): Promise<
+  | (OrderRecord & {
+      file?: {
+        originalFilename: string;
+        sizeBytes: number;
+        isPdf: boolean;
+        conversionStatus: string;
+      } | null;
+    })
+  | null
+> {
   const res = await db.query(`SELECT * FROM orders WHERE order_id = $1 LIMIT 1`, [orderPublicId]);
   if (!res.rowCount) return null;
+
   const o = res.rows[0];
+
+  const fileRes = await db.query(
+    `
+    SELECT original_filename, size_bytes, is_pdf, conversion_status
+    FROM order_files
+    WHERE order_id = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [o.id]
+  );
+
+  const file = fileRes.rowCount
+    ? {
+        originalFilename: fileRes.rows[0].original_filename,
+        sizeBytes: fileRes.rows[0].size_bytes,
+        isPdf: fileRes.rows[0].is_pdf,
+        conversionStatus: fileRes.rows[0].conversion_status,
+      }
+    : null;
+
   return {
     id: o.id,
     orderId: o.order_id,
@@ -341,5 +382,79 @@ export async function getOrderByPublicId(orderPublicId: string): Promise<OrderRe
     grandTotal: o.total_amount,
     createdAt: o.created_at,
     updatedAt: o.updated_at,
+    file,
   };
+}
+
+export async function updateOrderStatus(params: {
+  orderId: string; // DB UUID
+  nextStatus: OrderStatus;
+  actor?: "system" | "admin";
+  note?: string;
+}): Promise<OrderRecord> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const currentRes = await client.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1`, [
+      params.orderId,
+    ]);
+
+    if (!currentRes.rowCount) throw new Error("Order not found.");
+
+    const current = currentRes.rows[0];
+    const fromStatus = fromDbStatus(current.status);
+    assertStatusTransition(fromStatus, params.nextStatus);
+
+    const updateRes = await client.query(
+      `
+      UPDATE orders
+      SET status = $1
+      WHERE id = $2
+      RETURNING *
+      `,
+      [toDbStatus(params.nextStatus), params.orderId]
+    );
+
+    const updated = updateRes.rows[0];
+
+    await logOrderActivity({
+      client,
+      orderId: updated.id,
+      eventType: "status_updated",
+      payload: {
+        from: fromStatus,
+        to: params.nextStatus,
+        actor: params.actor ?? "system",
+        note: params.note ?? null,
+      },
+    });
+
+    await client.query("COMMIT");
+
+    return {
+      id: updated.id,
+      orderId: updated.order_id,
+      customerName: updated.customer_name,
+      customerAddress: updated.customer_address,
+      customerWhatsapp: updated.customer_whatsapp,
+      note: updated.note,
+      status: fromDbStatus(updated.status),
+      manualCheckRequired: updated.is_manual_check_required,
+      pageCount: updated.page_count,
+      printTier: updated.color_category,
+      pricePerPage: updated.price_per_page,
+      printSubtotal: updated.pages_amount,
+      folderFee: updated.folder_fee,
+      uniqueCode: updated.unique_code,
+      grandTotal: updated.total_amount,
+      createdAt: updated.created_at,
+      updatedAt: updated.updated_at,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
