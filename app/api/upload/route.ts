@@ -22,7 +22,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "File is required." }, { status: 400 });
     }
 
-    // 🔥 SIZE VALIDATION
     if (file.size > MAX_SIZE) {
       return NextResponse.json(
         { error: "File terlalu besar (maks 10MB)." },
@@ -30,7 +29,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 🔥 TYPE VALIDATION
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
         { error: "Format file tidak didukung." },
@@ -63,6 +61,7 @@ export async function POST(req: NextRequest) {
           pageCount: result.pageCount,
           confidence: result.analysisConfidence,
           notes: result.analysisNotes,
+          colorHint: result.isPdf ? "bw" : "unknown",
         },
       },
     });
