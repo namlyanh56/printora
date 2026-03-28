@@ -1,8 +1,47 @@
 import Link from "next/link";
 import { getAdminOrderList, formatRupiah } from "@/lib/admin";
 
+function StatusBadge({ status }: { status: string }) {
+  const s = status.toLowerCase();
+
+  if (s === "menunggu_verifikasi") {
+    return (
+      <span className="inline-flex rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-800">
+        {status}
+      </span>
+    );
+  }
+
+  if (s === "diterima") {
+    return (
+      <span className="inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800">
+        {status}
+      </span>
+    );
+  }
+
+  if (s === "ditolak") {
+    return (
+      <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800">
+        {status}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700">
+      {status}
+    </span>
+  );
+}
+
 export default async function AdminDashboardPage() {
-  const orders = await getAdminOrderList(100);
+  const rawOrders = await getAdminOrderList(100);
+
+  // Sorting sederhana: terbaru di atas
+  const orders = [...rawOrders].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white">
@@ -25,12 +64,17 @@ export default async function AdminDashboardPage() {
             {orders.map((o) => (
               <tr key={o.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-5 py-3">
-                  <Link href={`/admin/orders/${o.id}`} className="font-medium text-gray-900 hover:underline">
+                  <Link
+                    href={`/admin/orders/${o.id}`}
+                    className="font-medium text-gray-900 hover:underline"
+                  >
                     {o.orderId}
                   </Link>
                 </td>
                 <td className="px-5 py-3">{o.customerName}</td>
-                <td className="px-5 py-3">{o.status}</td>
+                <td className="px-5 py-3">
+                  <StatusBadge status={o.status} />
+                </td>
                 <td className="px-5 py-3">{formatRupiah(o.totalAmount)}</td>
               </tr>
             ))}
