@@ -11,6 +11,14 @@ async function updateStatusAction(formData: FormData) {
   await adminUpdateOrderStatus({ orderDbId, nextStatusLabel: nextStatus, actor: "admin" });
 }
 
+function toDownloadApiPath(storagePath: string): string | null {
+  // expecting saved path like "/uploads/<filename>"
+  if (!storagePath.startsWith("/uploads/")) return null;
+  const relative = storagePath.replace(/^\/uploads\//, "");
+  if (!relative) return null;
+  return `/api/files/${relative}`;
+}
+
 export default async function AdminOrderDetailPage({
   params,
 }: {
@@ -19,6 +27,8 @@ export default async function AdminOrderDetailPage({
   const { id } = await params;
   const detail = await getAdminOrderDetail(id);
   if (!detail) notFound();
+
+  const downloadUrl = detail.file?.storagePath ? toDownloadApiPath(detail.file.storagePath) : null;
 
   return (
     <div className="space-y-6">
@@ -62,14 +72,19 @@ export default async function AdminOrderDetailPage({
             <Cell label="Conversion Status" value={detail.file.conversionStatus} />
 
             <div className="flex flex-wrap gap-3">
-              <a
-                href={detail.file.storagePath}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Download File Asli
-              </a>
+              {downloadUrl ? (
+                <a
+                  href={downloadUrl}
+                  className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Download File
+                </a>
+              ) : (
+                <span className="rounded-xl border border-dashed border-gray-300 px-4 py-2 text-sm text-gray-400">
+                  File path tidak valid
+                </span>
+              )}
+
               {detail.file.convertedPdfPath ? (
                 <a
                   href={detail.file.convertedPdfPath}
