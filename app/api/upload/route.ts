@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processUploadedFile } from "@/lib/file";
+import { processUploadedFile, saveUploadedBufferToLocal } from "@/lib/file";
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -45,7 +45,11 @@ export async function POST(req: NextRequest) {
       buffer,
     });
 
-    const storagePath = `/uploads/${Date.now()}-${result.safeName}`;
+    // PATCH: simpan ke local storage nyata (./uploads) dan pakai path hasil simpan
+    const storagePath = await saveUploadedBufferToLocal({
+      buffer,
+      safeName: result.safeName,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -53,7 +57,7 @@ export async function POST(req: NextRequest) {
         originalFilename: result.originalName,
         mimeType: result.mimeType,
         sizeBytes: result.sizeBytes,
-        storagePath,
+        storagePath, // now real persisted path
         isPdf: result.isPdf,
         conversionStatus: result.conversionStatus,
         needsManualCheck: result.manualCheckRequired,
@@ -61,7 +65,6 @@ export async function POST(req: NextRequest) {
           pageCount: result.pageCount,
           confidence: result.analysisConfidence,
           notes: result.analysisNotes,
-          colorHint: result.isPdf ? "bw" : "unknown",
         },
       },
     });
