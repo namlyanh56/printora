@@ -1,5 +1,7 @@
-// BEFORE (schema): menerima printTier dari request
-// AFTER: printTier dihapus dari input schema (frontend tidak lagi menentukan)
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { createOrder, ORDER_STATUS } from "@/lib/order-management";
+import type { PrintTier } from "@/lib/pricing";
 
 const schema = z.object({
   customerName: z.string().min(2),
@@ -7,6 +9,7 @@ const schema = z.object({
   customerWhatsapp: z.string().min(8),
   note: z.string().optional().nullable(),
   pageCount: z.number().int().min(1),
+
   file: z.object({
     originalFilename: z.string().min(1),
     mimeType: z.string().min(1),
@@ -21,19 +24,23 @@ const schema = z.object({
   }),
 });
 
-// keep helper existing
+// Backend decides print tier (single source of truth)
 function decidePrintTier(notes?: string[] | null): PrintTier {
   if (!notes) return "bw";
+
   const text = notes.join(" ").toLowerCase();
+
   if (text.includes("full")) return "full_color";
   if (text.includes("color")) return "light_color";
+
   return "bw";
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = schema.parse(await req.json());
-    const printTier = decidePrintTier(body.file.analysisNotes); // backend decides
+
+    const printTier = decidePrintTier(body.file.analysisNotes);
 
     const order = await createOrder({
       customerName: body.customerName,
@@ -41,7 +48,7 @@ export async function POST(req: NextRequest) {
       customerWhatsapp: body.customerWhatsapp,
       note: body.note ?? null,
       pageCount: body.pageCount,
-      printTier, // backend-internal
+      printTier,
       file: body.file,
       initialStatus: ORDER_STATUS.MENUNGGU_PEMBAYARAN,
     });
