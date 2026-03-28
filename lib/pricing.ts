@@ -28,63 +28,48 @@ export const PRINT_TIER = {
 export type PrintTier = (typeof PRINT_TIER)[keyof typeof PRINT_TIER];
 
 /* =========================================================
+   PATCH: tier decision moved from API route to domain layer
+========================================================= */
+
+export function decidePrintTier(notes?: string[] | null): PrintTier {
+  if (!notes) return PRINT_TIER.BW;
+
+  const text = notes.join(" ").toLowerCase();
+
+  if (text.includes("full")) return PRINT_TIER.FULL_COLOR;
+  if (text.includes("color")) return PRINT_TIER.LIGHT_COLOR;
+
+  return PRINT_TIER.BW;
+}
+
+/* =========================================================
    TYPES (analysis -> pricing)
 ========================================================= */
 
 export type PageAnalysisSummary = {
-  /**
-   * Total halaman dokumen (>= 1)
-   */
   pageCount: number;
-
-  /**
-   * Hasil klasifikasi warna dokumen
-   */
   printTier: PrintTier;
-
-  /**
-   * Opsional: apakah analisis perlu verifikasi manual admin
-   */
   manualCheckRequired?: boolean | null;
-
-  /**
-   * Opsional: confidence dari analyzer (0..1)
-   */
   analysisConfidence?: number | null;
 };
 
 export type PricingInput = {
   pageCount: number;
   printTier: PrintTier;
-  /**
-   * Jika tidak diisi, akan di-generate otomatis.
-   */
   uniqueCode?: number;
 };
 
 export type PricingBreakdown = {
   currency: "IDR";
-
-  // source snapshot
   pageCount: number;
   printTier: PrintTier;
-
-  // components
   pricePerPage: number;
   printSubtotal: number;
   folderFee: number;
   uniqueCode: number;
-
-  // final
   grandTotal: number;
-
-  // extra metadata for UI/admin
   lineItems: Array<{
-    key:
-      | "print_subtotal"
-      | "folder_fee"
-      | "unique_code"
-      | "grand_total";
+    key: "print_subtotal" | "folder_fee" | "unique_code" | "grand_total";
     label: string;
     amount: number;
     formula?: string;
@@ -125,7 +110,6 @@ export function resolvePricePerPage(printTier: PrintTier): number {
     case PRINT_TIER.FULL_COLOR:
       return PRINT_PRICING.FULL_COLOR_PER_PAGE;
     default: {
-      // exhaustive check at compile time
       const _never: never = printTier;
       throw new Error(`Unknown print tier: ${String(_never)}`);
     }
@@ -139,7 +123,6 @@ export function generateUniqueCode(
   if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max < min) {
     throw new Error("Invalid unique code range.");
   }
-  // inclusive min/max
   return crypto.randomInt(min, max + 1);
 }
 
