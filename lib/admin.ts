@@ -2,9 +2,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { ORDER_STATUS } from "@/lib/order-management";
+import { getWaConnectionState } from "@/lib/whatsapp";
 
 const ADMIN_COOKIE = "printora_admin_session";
-const ADMIN_TOKEN = "printora-admin-local"; // MVP static token
+const ADMIN_TOKEN = "printora-admin-local";
 
 export type AdminOrderListItem = {
   id: string;
@@ -52,8 +53,8 @@ export type AdminOrderDetail = {
 };
 
 export type WhatsAppMonitor = {
-  senderStatus: "active" | "disconnected" | "error" | "reconnect_required";
-  lastSeenAt: string | null;
+  senderStatus: "connected" | "disconnected";
+  lastActivityAt: string | null;
   lastError: string | null;
   failedQueue: number;
 };
@@ -100,10 +101,6 @@ function mapLabelToDbStatus(label: string): string {
   }
 }
 
-/* =========================
-   Auth (simple MVP)
-========================= */
-
 export async function isAdminAuthenticated(): Promise<boolean> {
   const c = await cookies();
   return c.get(ADMIN_COOKIE)?.value === ADMIN_TOKEN;
@@ -133,10 +130,6 @@ export async function adminLogout(): Promise<void> {
   const c = await cookies();
   c.delete(ADMIN_COOKIE);
 }
-
-/* =========================
-   Dashboard Data
-========================= */
 
 export async function getAdminOverview(): Promise<AdminOverview> {
   const res = await db.query(`
@@ -266,8 +259,8 @@ export async function adminUpdateOrderStatus(input: {
 }
 
 export async function getWhatsAppMonitor(): Promise<WhatsAppMonitor> {
-  // MVP fallback jika tabel whatsapp_state belum dibuat
-  // status diambil dari log event sederhana
+  const conn = getWaConnectionState();
+
   const failRes = await db.query(`
     SELECT COUNT(*)::int AS failed_queue
     FROM order_logs
@@ -275,15 +268,14 @@ export async function getWhatsAppMonitor(): Promise<WhatsAppMonitor> {
   `);
 
   return {
-    senderStatus: "active",
-    lastSeenAt: new Date().toISOString(),
-    lastError: null,
+    senderStatus: conn.status,
+    lastActivityAt: conn.lastActivityAt,
+    lastError: conn.lastError,
     failedQueue: failRes.rows[0]?.failed_queue ?? 0,
   };
 }
 
 export async function triggerFallbackQueueProcessing(): Promise<number> {
-  // MVP: hanya membaca jumlah failed queue; retry logic bisa diintegrasikan nanti
   const res = await db.query(`
     SELECT COUNT(*)::int AS failed_queue
     FROM order_logs
