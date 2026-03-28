@@ -169,6 +169,59 @@ export async function saveUploadedBufferToLocal(input: {
 }
 
 /* =========================================================
+   PATCH: STORAGE CLEANUP HELPERS
+========================================================= */
+
+function toAbsoluteLocalPath(storagePath: string): string {
+  if (!storagePath.startsWith("/uploads/")) {
+    throw new Error("Unsupported storage path.");
+  }
+  const relative = storagePath.replace(/^\/uploads\//, "");
+  const uploadsRoot = path.join(process.cwd(), "uploads");
+  const abs = path.join(uploadsRoot, path.normalize(relative));
+
+  if (!abs.startsWith(uploadsRoot)) {
+    throw new Error("Invalid storage path traversal.");
+  }
+
+  return abs;
+}
+
+export async function fileExistsInLocalStorage(storagePath: string): Promise<boolean> {
+  try {
+    const abs = toAbsoluteLocalPath(storagePath);
+    const stat = await fs.stat(abs);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteLocalStoredFile(storagePath: string): Promise<{
+  ok: boolean;
+  existed: boolean;
+  error?: string;
+}> {
+  try {
+    const abs = toAbsoluteLocalPath(storagePath);
+    const exists = await fileExistsInLocalStorage(storagePath);
+
+    if (!exists) {
+      return { ok: true, existed: false };
+    }
+
+    await fs.unlink(abs);
+    return { ok: true, existed: true };
+  } catch (e) {
+    return {
+      ok: false,
+      existed: true,
+      error: e instanceof Error ? e.message : "delete_failed",
+    };
+  }
+}
+
+/* =========================================================
    2) FILE CLASSIFICATION
 ========================================================= */
 
