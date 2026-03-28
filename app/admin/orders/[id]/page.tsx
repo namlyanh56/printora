@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { formatRupiah, getAdminOrderDetail, adminUpdateOrderStatus } from "@/lib/admin";
+import {
+  formatRupiah,
+  getAdminOrderDetail,
+  adminUpdateOrderStatus,
+  getAdminOrderList,
+} from "@/lib/admin";
 import { ORDER_STATUS } from "@/lib/order-management";
 
 async function updateStatusAction(formData: FormData) {
@@ -12,7 +17,6 @@ async function updateStatusAction(formData: FormData) {
 }
 
 function toDownloadApiPath(storagePath: string): string | null {
-  // expecting saved path like "/uploads/<filename>"
   if (!storagePath.startsWith("/uploads/")) return null;
   const relative = storagePath.replace(/^\/uploads\//, "");
   if (!relative) return null;
@@ -24,8 +28,17 @@ export default async function AdminOrderDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const detail = await getAdminOrderDetail(id);
+  // PATCH: route param [id] now treated as public orderId
+  const { id: publicOrderId } = await params;
+
+  // minimal adaptation: resolve public orderId -> internal DB id via existing list helper
+  const list = await getAdminOrderList(500);
+  const matched = list.find((o) => o.orderId === publicOrderId);
+
+  if (!matched) notFound();
+
+  // existing detail helper still expects internal DB id
+  const detail = await getAdminOrderDetail(matched.id);
   if (!detail) notFound();
 
   const downloadUrl = detail.file?.storagePath ? toDownloadApiPath(detail.file.storagePath) : null;
@@ -109,6 +122,7 @@ export default async function AdminOrderDetailPage({
       <section className="rounded-2xl border border-gray-200 bg-white p-6">
         <h2 className="text-sm font-semibold text-gray-900">Update Status Manual</h2>
         <form action={updateStatusAction} className="mt-4 flex flex-wrap items-center gap-3">
+          {/* keep internal id for update action (not exposed in URL) */}
           <input type="hidden" name="orderDbId" value={detail.id} />
           <select
             name="nextStatus"
