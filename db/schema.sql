@@ -86,8 +86,16 @@ CREATE TABLE IF NOT EXISTS order_files (
 
   file_hash VARCHAR(128) NULL,
 
+  -- PATCH: storage cleanup flags
+  is_deleted BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ NULL,
+
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- PATCH: safe migration for existing DB
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
 
 CREATE TABLE IF NOT EXISTS order_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -101,6 +109,9 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_order_files_order_id ON order_files(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_logs_order_id ON order_logs(order_id);
+
+-- PATCH: query cleanup candidates faster
+CREATE INDEX IF NOT EXISTS idx_order_files_not_deleted ON order_files(is_deleted);
 
 -- Auto-update updated_at
 CREATE OR REPLACE FUNCTION set_updated_at()
