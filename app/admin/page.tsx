@@ -38,7 +38,6 @@ function StatusBadge({ status }: { status: string }) {
 export default async function AdminDashboardPage() {
   const rawOrders = await getAdminOrderList(100);
 
-  // Sorting sederhana: terbaru di atas
   const orders = [...rawOrders].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -64,8 +63,9 @@ export default async function AdminDashboardPage() {
             {orders.map((o) => (
               <tr key={o.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-5 py-3">
+                  {/* PATCH: use public orderId in URL */}
                   <Link
-                    href={`/admin/orders/${o.id}`}
+                    href={`/admin/orders/${encodeURIComponent(o.orderId)}`}
                     className="font-medium text-gray-900 hover:underline"
                   >
                     {o.orderId}
