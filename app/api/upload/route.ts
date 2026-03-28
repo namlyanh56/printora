@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processUploadedFile, saveUploadedBufferToLocal } from "@/lib/file";
+import {
+  processUploadedFile,
+  saveUploadedBufferToLocal,
+  UPLOAD_ALLOWED_MIME_TYPES,
+} from "@/lib/file";
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
-
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "application/vnd.ms-powerpoint",
-  "image/png",
-  "image/jpeg",
-];
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,7 +23,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    if (!UPLOAD_ALLOWED_MIME_TYPES.includes(file.type as (typeof UPLOAD_ALLOWED_MIME_TYPES)[number])) {
       return NextResponse.json(
         { error: "Format file tidak didukung." },
         { status: 400 }
@@ -45,7 +39,6 @@ export async function POST(req: NextRequest) {
       buffer,
     });
 
-    // PATCH: simpan ke local storage nyata (./uploads) dan pakai path hasil simpan
     const storagePath = await saveUploadedBufferToLocal({
       buffer,
       safeName: result.safeName,
@@ -57,7 +50,7 @@ export async function POST(req: NextRequest) {
         originalFilename: result.originalName,
         mimeType: result.mimeType,
         sizeBytes: result.sizeBytes,
-        storagePath, // now real persisted path
+        storagePath,
         isPdf: result.isPdf,
         conversionStatus: result.conversionStatus,
         needsManualCheck: result.manualCheckRequired,
