@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import type { PoolClient } from "pg";
-import { calculatePricing, type PrintTier } from "@/lib/pricing";
+import { calculatePricing, type PrintTier, formatRupiah } from "@/lib/pricing";
 
 /** Single source of truth: order status + order id + create/pay/status updates */
 export const ORDER_STATUS = {
@@ -63,7 +63,11 @@ export type OrderLogEvent =
   | "order_created"
   | "file_analysis_saved"
   | "status_updated"
-  | "payment_marked";
+  | "payment_marked"
+  | "wa_send_attempt"
+  | "wa_send_failed"
+  | "wa_send_success"
+  | "wa_command_received";
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [ORDER_STATUS.DRAFT]: [ORDER_STATUS.MENUNGGU_PEMBAYARAN, ORDER_STATUS.DITOLAK],
@@ -265,29 +269,45 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRecord>
 }
 
 export async function markOrderAsPaid(orderPublicId: string): Promise<OrderRecord> {
+  return updateOrderStatusByPublicId({
+    orderPublicId,
+    nextStatus: ORDER_STATUS.MENUNGGU_VERIFIKASI,
+    actor: "customer_click",
+    eventType: "payment_marked",
+  });
+}
+
+// PATCH: update by public orderId for WA inbound + API flows
+export async function updateOrderStatusByPublicId(params: {
+  orderPublicId: string;
+  nextStatus: OrderStatus;
+  actor?: string;
+  eventType?: OrderLogEvent;
+}): Promise<OrderRecord> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
 
-    const currentRes = await client.query(
-      `SELECT * FROM orders WHERE order_id = $1 LIMIT 1`,
-      [orderPublicId]
-    );
-    if (!currentRes.rowCount) throw new Error("Order not found.");
+    const currentRes = await client.query(`SELECT * FROM orders WHERE order_id = $1 LIMIT 1`, [
+      params.orderPublicId,
+    ]);
+
+    if (!currentRes.rowCount) {
+      throw new Error("Order not found.");
+    }
 
     const current = currentRes.rows[0];
     const from = fromDbStatus(current.status);
-    const to = ORDER_STATUS.MENUNGGU_VERIFIKASI;
-    assertStatusTransition(from, to);
+    assertStatusTransition(from, params.nextStatus);
 
     const updatedRes = await client.query(
       `
       UPDATE orders
-      SET status = $1, paid_clicked_at = NOW()
+      SET status = $1
       WHERE order_id = $2
       RETURNING *
       `,
-      [toDbStatus(to), orderPublicId]
+      [toDbStatus(params.nextStatus), params.orderPublicId]
     );
 
     const o = updatedRes.rows[0];
@@ -295,8 +315,12 @@ export async function markOrderAsPaid(orderPublicId: string): Promise<OrderRecor
     await logOrderActivity({
       client,
       orderId: o.id,
-      eventType: "payment_marked",
-      payload: { from, to, by: "customer_click" },
+      eventType: params.eventType ?? "status_updated",
+      payload: {
+        from,
+        to: params.nextStatus,
+        actor: params.actor ?? "system",
+      },
     });
 
     await client.query("COMMIT");
