@@ -1,0 +1,9 @@
+# App
+NODE_ENV=development
+
+# Database (PostgreSQL / Supabase)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/printora
+
+# Optional app-level settings
+APP_NAME=Printora
+APP_URL=http://localhost:3000
