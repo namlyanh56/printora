@@ -23,13 +23,7 @@ export default async function AdminDashboardPage() {
           </thead>
           <tbody>
             {orders.map((o) => (
-              <tr
-                key={o.id}
-                className="cursor-pointer border-t border-gray-100 hover:bg-gray-50"
-                onClick={() => {
-                  // progressive enhancement via link inside first cell
-                }}
-              >
+              <tr key={o.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-5 py-3">
                   <Link href={`/admin/orders/${o.id}`} className="font-medium text-gray-900 hover:underline">
                     {o.orderId}
