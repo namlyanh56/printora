@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { PoolClient } from "pg";
-import { calculatePricing, type PrintTier, formatRupiah } from "@/lib/pricing";
+import { calculatePricing, type PrintTier } from "@/lib/pricing";
+import { deleteLocalStoredFile } from "@/lib/file";
 
 /** Single source of truth: order status + order id + create/pay/status updates */
 export const ORDER_STATUS = {
@@ -40,8 +41,8 @@ export type CreateOrderInput = {
 };
 
 export type OrderRecord = {
-  id: string; // UUID
-  orderId: string; // public ID, ex: PNR12345
+  id: string;
+  orderId: string;
   customerName: string;
   customerAddress: string;
   customerWhatsapp: string;
@@ -67,7 +68,9 @@ export type OrderLogEvent =
   | "wa_send_attempt"
   | "wa_send_failed"
   | "wa_send_success"
-  | "wa_command_received";
+  | "wa_command_received"
+  | "file_deleted"
+  | "file_delete_failed";
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [ORDER_STATUS.DRAFT]: [ORDER_STATUS.MENUNGGU_PEMBAYARAN, ORDER_STATUS.DITOLAK],
@@ -204,9 +207,9 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRecord>
       `
       INSERT INTO order_files (
         order_id, original_filename, mime_type, size_bytes, storage_path,
-        is_pdf, is_converted_to_pdf, conversion_status, file_hash
+        is_pdf, is_converted_to_pdf, conversion_status, file_hash, is_deleted, deleted_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,NULL)
       `,
       [
         o.id,
@@ -277,7 +280,54 @@ export async function markOrderAsPaid(orderPublicId: string): Promise<OrderRecor
   });
 }
 
-// PATCH: update by public orderId for WA inbound + API flows
+async function tryDeleteOrderFilesImmediately(orderDbId: string): Promise<void> {
+  const fileRes = await db.query(
+    `
+    SELECT id, storage_path
+    FROM order_files
+    WHERE order_id = $1 AND is_deleted = false
+    `,
+    [orderDbId]
+  );
+
+  for (const f of fileRes.rows) {
+    try {
+      const del = await deleteLocalStoredFile(f.storage_path);
+      if (del.ok) {
+        await db.query(
+          `
+          UPDATE order_files
+          SET is_deleted = true, deleted_at = NOW()
+          WHERE id = $1
+          `,
+          [f.id]
+        );
+        await logOrderActivity({
+          orderId: orderDbId,
+          eventType: "file_deleted",
+          payload: { fileId: f.id, storagePath: f.storage_path, existed: del.existed },
+        });
+      } else {
+        await logOrderActivity({
+          orderId: orderDbId,
+          eventType: "file_delete_failed",
+          payload: { fileId: f.id, storagePath: f.storage_path, error: del.error ?? "unknown" },
+        });
+      }
+    } catch (e) {
+      await logOrderActivity({
+        orderId: orderDbId,
+        eventType: "file_delete_failed",
+        payload: {
+          fileId: f.id,
+          storagePath: f.storage_path,
+          error: e instanceof Error ? e.message : "unknown",
+        },
+      });
+    }
+  }
+}
+
 export async function updateOrderStatusByPublicId(params: {
   orderPublicId: string;
   nextStatus: OrderStatus;
@@ -285,6 +335,7 @@ export async function updateOrderStatusByPublicId(params: {
   eventType?: OrderLogEvent;
 }): Promise<OrderRecord> {
   const client = await db.connect();
+  let updatedOrderId: string | null = null;
   try {
     await client.query("BEGIN");
 
@@ -311,6 +362,7 @@ export async function updateOrderStatusByPublicId(params: {
     );
 
     const o = updatedRes.rows[0];
+    updatedOrderId = o.id;
 
     await logOrderActivity({
       client,
@@ -324,6 +376,15 @@ export async function updateOrderStatusByPublicId(params: {
     });
 
     await client.query("COMMIT");
+
+    // PATCH: if rejected, delete files immediately (best effort, do not fail status update)
+    if (params.nextStatus === ORDER_STATUS.DITOLAK && updatedOrderId) {
+      try {
+        await tryDeleteOrderFilesImmediately(updatedOrderId);
+      } catch (e) {
+        console.error("[DELETE_FILE_ON_REJECT_FAILED]", e);
+      }
+    }
 
     return {
       id: o.id,
@@ -411,12 +472,13 @@ export async function getOrderByPublicId(orderPublicId: string): Promise<
 }
 
 export async function updateOrderStatus(params: {
-  orderId: string; // DB UUID
+  orderId: string;
   nextStatus: OrderStatus;
   actor?: "system" | "admin";
   note?: string;
 }): Promise<OrderRecord> {
   const client = await db.connect();
+  let updatedOrderId: string | null = null;
   try {
     await client.query("BEGIN");
 
@@ -441,6 +503,7 @@ export async function updateOrderStatus(params: {
     );
 
     const updated = updateRes.rows[0];
+    updatedOrderId = updated.id;
 
     await logOrderActivity({
       client,
@@ -455,6 +518,15 @@ export async function updateOrderStatus(params: {
     });
 
     await client.query("COMMIT");
+
+    // PATCH: if rejected, delete files immediately (best effort)
+    if (params.nextStatus === ORDER_STATUS.DITOLAK && updatedOrderId) {
+      try {
+        await tryDeleteOrderFilesImmediately(updatedOrderId);
+      } catch (e) {
+        console.error("[DELETE_FILE_ON_REJECT_FAILED]", e);
+      }
+    }
 
     return {
       id: updated.id,
