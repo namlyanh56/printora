@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import path from "path";
+import { promises as fs } from "fs";
 import { z } from "zod";
 
 /**
@@ -132,6 +133,28 @@ function sanitizeFileName(name: string): string {
 
   const trimmed = base.slice(0, MAX_FILENAME_LENGTH);
   return trimmed.length > 0 ? trimmed : `upload-${Date.now()}`;
+}
+
+/* =========================================================
+   PATCH: LOCAL FILE STORAGE HELPER
+========================================================= */
+
+export async function saveUploadedBufferToLocal(input: {
+  buffer: Buffer;
+  safeName: string;
+}): Promise<string> {
+  const uploadsDir = path.join(process.cwd(), "uploads");
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(input.safeName);
+  const base = path.basename(input.safeName, ext);
+  const uniqueName = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}-${base}${ext}`;
+  const absolutePath = path.join(uploadsDir, uniqueName);
+
+  await fs.writeFile(absolutePath, input.buffer);
+
+  // Return relative path agar konsisten disimpan ke DB dan bisa dipakai admin
+  return `/uploads/${uniqueName}`;
 }
 
 /* =========================================================
